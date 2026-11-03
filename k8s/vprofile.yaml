@@ -1,0 +1,266 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vprofile-secret
+  namespace: vprofile
+type: Opaque
+stringData:
+  db-password: admin123
+  rmq-password: test
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pvc
+  namespace: vprofile
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db01
+  namespace: vprofile
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db01
+  template:
+    metadata:
+      labels:
+        app: db01
+    spec:
+      containers:
+        - name: mariadb
+          image: mariadb:10.5
+          env:
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vprofile-secret
+                  key: db-password
+            - name: MARIADB_DATABASE
+              value: accounts
+            - name: MARIADB_USER
+              value: admin
+            - name: MARIADB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vprofile-secret
+                  key: db-password
+          ports:
+            - containerPort: 3306
+          readinessProbe:
+            exec:
+              command:
+                - healthcheck.sh
+                - --connect
+                - --innodb_initialized
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: db-pvc
+        - name: init
+          configMap:
+            name: db-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db01
+  namespace: vprofile
+spec:
+  selector:
+    app: db01
+  ports:
+    - port: 3306
+      targetPort: 3306
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mc01
+  namespace: vprofile
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mc01
+  template:
+    metadata:
+      labels:
+        app: mc01
+    spec:
+      containers:
+        - name: memcached
+          image: memcached
+          ports:
+            - containerPort: 11211
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mc01
+  namespace: vprofile
+spec:
+  selector:
+    app: mc01
+  ports:
+    - port: 11211
+      targetPort: 11211
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rmq01
+  namespace: vprofile
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rmq01
+  template:
+    metadata:
+      labels:
+        app: rmq01
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: test
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: vprofile-secret
+                  key: rmq-password
+          ports:
+            - containerPort: 5672
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rmq01
+  namespace: vprofile
+spec:
+  selector:
+    app: rmq01
+  ports:
+    - port: 5672
+      targetPort: 5672
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app01
+  namespace: vprofile
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app01
+  template:
+    metadata:
+      labels:
+        app: app01
+    spec:
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z db01 3306; do echo waiting for db01; sleep 3; done
+      containers:
+        - name: tomcat
+          image: vprofile-app:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app01
+  namespace: vprofile
+spec:
+  selector:
+    app: app01
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-conf
+  namespace: vprofile
+data:
+  default.conf: |
+    server {
+        listen 80;
+        location / {
+            proxy_pass http://app01:8080;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web01
+  namespace: vprofile
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web01
+  template:
+    metadata:
+      labels:
+        app: web01
+    spec:
+      containers:
+        - name: nginx
+          image: nginx
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: conf
+          configMap:
+            name: nginx-conf
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web01
+  namespace: vprofile
+spec:
+  type: LoadBalancer
+  selector:
+    app: web01
+  ports:
+    - port: 80
+      targetPort: 80

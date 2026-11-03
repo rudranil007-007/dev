@@ -1,0 +1,6 @@
+target/
+*.war
+.vagrant/
+*.log
+.idea/
+.vscode/
