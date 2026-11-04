@@ -1,0 +1,7 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: vprofile
+  region: ap-southeast-2
+addons:
+- name: aws-ebs-csi-driver
