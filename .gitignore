@@ -4,3 +4,7 @@ target/
 *.log
 .idea/
 .vscode/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.pub
