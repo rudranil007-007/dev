@@ -7,7 +7,7 @@ pipeline {
     ACCOUNT_ID         = '124118675423'
     REGISTRY           = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
     IMAGE              = "${REGISTRY}/vprofile-app:${BUILD_NUMBER}"
-    CLUSTER            = 'vprofile'
+    CLUSTER            = 'vprofile-new'
   }
   stages {
     stage('Build image') {
