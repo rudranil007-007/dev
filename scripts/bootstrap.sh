@@ -3,14 +3,21 @@ set -x
 PASS="$1"
 REPO="$2"
 export DEBIAN_FRONTEND=noninteractive
-fallocate -l 2G /swapfile
+systemctl stop unattended-upgrades || true
+sleep 10
+fallocate -l 4G /swapfile
 chmod 600 /swapfile
 mkswap /swapfile
 swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
 mkdir -p /etc/apt/keyrings
 apt-get update -y
 apt-get install -y fontconfig openjdk-21-jre-headless git curl
 curl -fsSL https://get.docker.com | sh
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --disable traefik --write-kubeconfig-mode 644" sh -
+until k3s kubectl get nodes 2>/dev/null | grep -q ' Ready'; do sleep 5; done
+echo 'jenkins ALL=(root) NOPASSWD: /usr/local/bin/k3s' > /etc/sudoers.d/jenkins
+chmod 440 /etc/sudoers.d/jenkins
 wget -O /etc/apt/keyrings/jenkins-keyring.asc https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
 echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" > /etc/apt/sources.list.d/jenkins.list
 apt-get update -y
@@ -34,14 +41,14 @@ chown -R jenkins:jenkins /var/lib/jenkins
 mkdir -p /etc/systemd/system/jenkins.service.d
 cat > /etc/systemd/system/jenkins.service.d/o.conf << 'CONF'
 [Service]
-Environment="JAVA_OPTS=-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"
+Environment="JAVA_OPTS=-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false -Xmx512m"
 CONF
 systemctl daemon-reload
 systemctl start jenkins
 until curl -sf http://localhost:8080/login > /dev/null; do sleep 5; done
 curl -s -u admin:$PASS http://localhost:8080/jnlpJars/jenkins-cli.jar -o /tmp/cli.jar
 CLI="java -jar /tmp/cli.jar -s http://localhost:8080 -auth admin:$PASS"
-for i in 1 2 3 4 5; do $CLI install-plugin workflow-aggregator git && break; sleep 20; done
+for i in 1 2 3 4 5 6; do $CLI install-plugin workflow-aggregator git && break; sleep 20; done
 systemctl restart jenkins
 sleep 20
 until curl -sf http://localhost:8080/login > /dev/null; do sleep 5; done
